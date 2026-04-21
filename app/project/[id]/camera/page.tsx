@@ -346,7 +346,7 @@ export default function CameraPage({ params }: { params: Promise<{ id: string }>
         partLabel={currentPart?.label || '實測'}
         category={currentPart?.type || 'test'}
         originalLines={currentLines}
-        onComplete={refinedLines => { setCurrentLines(refinedLines); setCamState('preview') }}
+        onComplete={refinedLines => { setCurrentLines(refinedLines); if (project) { const ns = project.script.map((p, i) => i === partIdx ? { ...p, lines: refinedLines, content: refinedLines.map((l: any) => l.text).join('。') } : p); setProject({ ...project, script: ns }); saveScript(ns); } setCamState('preview') }}
         onSkip={() => setCamState('preview')}
       />
     </main>
