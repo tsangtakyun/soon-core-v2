@@ -115,7 +115,17 @@ ${placeDetails.editorialSummary ? `官方簡介：${placeDetails.editorialSummar
 - 多用探索性語氣（「聽講」「據說」「今日嚟試下」）`
       }
 
-      const prompt = `你係 SOON Core AI，幫 creator 寫一份真實、有個性、唔oversell嘅短片劇本。
+      const prompt = `你係 SOON Core AI，幫 creator 寫一份短片劇本。
+
+【語氣規則】
+- 短句為主，一句唔超過15字，多換行
+- 開場必有懷疑或挑戰：「真定假呀？」「係咪誇張咗？」「好唔好食先？」
+- 感嘆詞自然出現：「嘩…」「原來…」「好驚呀」
+- 生動比喻令感受更真實：「彈牙到好似跳緊舞咁」「香到癲咗」
+- 破折號製造停頓感：「唔敢講，但係——真係好好食！」
+- 有個人立場，唔係純中立報導
+- 結尾唔係純推介，係真實感想
+- 禁用書面語：「此外」「值得一提」「總括而言」「不得不說」「令人印象深刻」
 
 名稱：${name}
 地址：${address || '未提供'}
@@ -125,13 +135,11 @@ ${placeDetails.editorialSummary ? `官方簡介：${placeDetails.editorialSummar
 ${partList}
 ${realDataContext}
 
-寫稿規則：
-1. 廣東話口語，短句，有個性，唔係機器人語氣
-2. 要有立場——好就講好，唔好就講唔好，唔好全部都正面
-3. Hook：一句，帶真實懸念或衝擊感（可以係質疑、挑戰、反差）
-4. 背景介紹（如有）：根據真實資料，3-4句
-5. 每個實測 part：${testLines}句，包括過程、真實感受、具體細節
-6. Ending：2句——真實總結 + call to action
+寫稿要求：
+1. Hook：一句，用懷疑、挑戰或反差開場
+2. 背景介紹（如有）：根據真實資料，3-4句，短句換行
+3. 每個實測 part：${testLines}句，有過程、有真實感受、有具體細節
+4. Ending：2句——真實個人總結 + call to action
 
 每句對白提供：
 - shot：拍攝方式（Wide Shot / Medium Shot / Close-up / B-roll / 手持跟拍 / 俯拍 / 反應鏡頭）
@@ -149,7 +157,7 @@ ${realDataContext}
 
       const res    = await fetch('/api/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 3000, messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 3000, _category: category, messages: [{ role: 'user', content: prompt }] }),
       })
       const data   = await res.json()
       const parsed = JSON.parse((data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim())
