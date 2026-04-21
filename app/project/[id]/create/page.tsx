@@ -12,32 +12,41 @@ const CATEGORIES = [
   { id: 'people',     label: '幕後 / 人物故事',  desc: '採訪、故事、職人精神' },
 ]
 
-// Extended ScriptLine type for lines with visual guidance
 export type ScriptLine = {
-  text:   string   // VO / dialogue
-  shot:   string   // e.g. "Wide Shot"
-  visual: string   // what to find/frame in the scene
+  text: string; shot: string; visual: string
+}
+
+type PlaceDetails = {
+  name: string
+  rating: number
+  totalRatings: number
+  priceLevel?: number
+  types: string[]
+  editorialSummary: string
+  reviews: { rating: number; text: string; time: string }[]
+  isOpen?: boolean
 }
 
 function CreateVideoInner({ params }: { params: Promise<{ id: string }> }) {
-  const { id }        = use(params)
-  const router        = useRouter()
-  const searchParams  = useSearchParams()
+  const { id }       = use(params)
+  const router       = useRouter()
+  const searchParams = useSearchParams()
 
-  const [project, setProject]   = useState<Project | null>(null)
-  const [name, setName]         = useState('')
-  const [address, setAddress]   = useState('')
-  const [category, setCategory] = useState(searchParams.get('category') || '')
-  const [step, setStep]         = useState<'input' | 'generating' | 'review'>('input')
-  const [script, setScript]     = useState<ScriptPart[]>([])
-  const [editIdx, setEditIdx]   = useState<number | null>(null)
+  const [project, setProject]       = useState<Project | null>(null)
+  const [name, setName]             = useState('')
+  const [address, setAddress]       = useState('')
+  const [category, setCategory]     = useState(searchParams.get('category') || '')
+  const [step, setStep]             = useState<'input' | 'generating' | 'review'>('input')
+  const [script, setScript]         = useState<ScriptPart[]>([])
+  const [editIdx, setEditIdx]       = useState<number | null>(null)
+  const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null)
+  const [fetchingPlace, setFetchingPlace] = useState(false)
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem('soon-projects')
       if (raw) {
-        const projs: Project[] = JSON.parse(raw)
-        const p = projs.find(x => x.id === id)
+        const p = JSON.parse(raw).find((x: Project) => x.id === id)
         if (p) { setProject(p); setName(p.name); setAddress(p.address) }
       }
     } catch {}
@@ -47,10 +56,22 @@ function CreateVideoInner({ params }: { params: Promise<{ id: string }> }) {
     try {
       const raw   = localStorage.getItem('soon-projects') || '[]'
       const projs: Project[] = JSON.parse(raw)
-      const updated = projs.map(p => p.id === id
-        ? { ...p, ...updates, updated_at: new Date().toISOString() } : p)
-      localStorage.setItem('soon-projects', JSON.stringify(updated))
+      localStorage.setItem('soon-projects', JSON.stringify(
+        projs.map(p => p.id === id ? { ...p, ...updates, updated_at: new Date().toISOString() } : p)
+      ))
     } catch {}
+  }
+
+  // Fetch place details when name/address filled
+  const fetchPlaceDetails = async () => {
+    if (!name.trim()) return
+    setFetchingPlace(true)
+    try {
+      const res  = await fetch(`/api/place-details?name=${encodeURIComponent(name)}&address=${encodeURIComponent(address)}`)
+      const data = await res.json()
+      setPlaceDetails(data.details)
+    } catch {}
+    setFetchingPlace(false)
   }
 
   const generate = async () => {
@@ -63,7 +84,38 @@ function CreateVideoInner({ params }: { params: Promise<{ id: string }> }) {
       const partList = struct.parts.map(p => `- ${p.label}（${p.durationSec}秒）`).join('\n')
       const testLines = dur === 30 ? 4 : dur === 60 ? 5 : 6
 
-      const prompt = `你係 SOON Core AI，幫 creator 寫一份短片劇本，同時提供每句嘅拍攝畫面指引。
+      // Build real data context for AI
+      let realDataContext = ''
+      if (placeDetails) {
+        const stars    = '★'.repeat(Math.round(placeDetails.rating)) + '☆'.repeat(5 - Math.round(placeDetails.rating))
+        const price    = placeDetails.priceLevel ? '$'.repeat(placeDetails.priceLevel) : '未知'
+        const reviews  = placeDetails.reviews.map((r, i) =>
+          `評論${i+1}（${r.rating}星）：${r.text}`
+        ).join('\n')
+
+        realDataContext = `
+【真實資料 — 必須根據以下資料寫稿，唔好自己估】
+地點名稱：${placeDetails.name}
+Google評分：${placeDetails.rating} / 5（${placeDetails.totalRatings} 個評論）${stars}
+價格水平：${price}
+Google真實評論：
+${reviews || '暫無評論'}
+${placeDetails.editorialSummary ? `官方簡介：${placeDetails.editorialSummary}` : ''}
+
+重要：
+- 如果評分高（4.5+），可以正面推介
+- 如果評分中等（3.5-4.4），要客觀，提出優缺點
+- 如果評分低（3.5以下），要誠實，唔好硬講好
+- 稿中嘅具體描述必須來自真實評論，唔好自己發明`
+      } else {
+        realDataContext = `
+【注意：搵唔到呢個地方嘅真實資料】
+- 只根據名稱同地址估計，唔確定嘅資訊唔好寫落稿
+- 避免具體數字（例如幾多錢）或無根據嘅讚美
+- 多用探索性語氣（「聽講」「據說」「今日嚟試下」）`
+      }
+
+      const prompt = `你係 SOON Core AI，幫 creator 寫一份真實、有個性、唔oversell嘅短片劇本。
 
 名稱：${name}
 地址：${address || '未提供'}
@@ -71,86 +123,61 @@ function CreateVideoInner({ params }: { params: Promise<{ id: string }> }) {
 片長：${dur}秒
 結構：
 ${partList}
+${realDataContext}
 
-重要規則：
-1. 根據實際地址同地區生成，唔好假設係香港
-2. 廣東話口語，短句，自然，唔oversell
-3. 內容必須配合類別「${cat.label}」
-4. 每一句對白，都要提供：
-   - shot：拍攝方式（Wide Shot / Medium Shot / Close-up / B-roll / 手持跟拍 / 俯拍 / 反應鏡頭）
-   - visual：畫面描述，具體講明搵咩、拍咩角度、畫面入面應該有咩（例：「搵村落全景，從高處拍攝紅河邊嘅陶瓷工坊群」）
-5. Hook：一句，帶懸念或衝擊感
-6. 背景介紹（如有）：3-4句，逐句分析最配合嘅畫面
-7. 每個實測 part：${testLines}句對白
-8. Ending：2句——總結感受 + call to action（例：「你有冇興趣黎？留言話我知！」）
+寫稿規則：
+1. 廣東話口語，短句，有個性，唔係機器人語氣
+2. 要有立場——好就講好，唔好就講唔好，唔好全部都正面
+3. Hook：一句，帶真實懸念或衝擊感（可以係質疑、挑戰、反差）
+4. 背景介紹（如有）：根據真實資料，3-4句
+5. 每個實測 part：${testLines}句，包括過程、真實感受、具體細節
+6. Ending：2句——真實總結 + call to action
+
+每句對白提供：
+- shot：拍攝方式（Wide Shot / Medium Shot / Close-up / B-roll / 手持跟拍 / 俯拍 / 反應鏡頭）
+- visual：具體畫面描述（搵咩、拍咩角度）
 
 輸出 JSON（唔好加其他文字）：
 {
   "parts": [
     {
       "label": "Hook",
-      "lines": [
-        { "text": "對白", "shot": "shot type", "visual": "畫面描述" }
-      ]
-    },
-    {
-      "label": "背景介紹",
-      "lines": [
-        { "text": "第一句", "shot": "Wide Shot", "visual": "搵咩畫面" },
-        { "text": "第二句", "shot": "B-roll",    "visual": "搵咩畫面" }
-      ]
-    },
-    {
-      "label": "實測 1",
-      "lines": [
-        { "text": "第一句", "shot": "Medium Shot", "visual": "畫面描述" },
-        { "text": "第二句", "shot": "Close-up",    "visual": "畫面描述" }
-      ]
-    },
-    {
-      "label": "Ending",
-      "lines": [
-        { "text": "總結", "shot": "Medium Shot", "visual": "畫面描述" },
-        { "text": "Call to action", "shot": "Close-up", "visual": "直視鏡頭" }
-      ]
+      "lines": [{ "text": "對白", "shot": "shot type", "visual": "畫面描述" }]
     }
   ]
 }`
 
       const res    = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 3000,
-          messages: [{ role: 'user', content: prompt }],
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 3000, messages: [{ role: 'user', content: prompt }] }),
       })
       const data   = await res.json()
-      const parsed = JSON.parse(
-        (data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim()
-      )
+      const parsed = JSON.parse((data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim())
+
+      const SHOT_LABELS: Record<string, { name: string; note: string }> = {
+        wide:     { name: 'Wide Shot',   note: '交代環境，帶出場景全貌' },
+        medium:   { name: 'Medium Shot', note: '主持半身，自然對話感' },
+        close:    { name: 'Close-up',    note: '主體特寫，突出細節' },
+        product:  { name: '主體特寫',    note: '近鏡拍攝主角質感同造型' },
+        follow:   { name: '手持跟拍',    note: '跟住主持移動，動感十足' },
+        broll:    { name: 'B-roll',      note: '環境補充畫面，配合旁白' },
+        overhead: { name: '俯拍',        note: '由上方拍攝，展示全貌' },
+        reaction: { name: '反應鏡頭',    note: '主持真實反應同表情' },
+      }
 
       const newScript: ScriptPart[] = struct.parts.map((p, i) => {
         const aiPart = parsed.parts?.[i] || {}
         const lines: ScriptLine[] = (aiPart.lines || []).map((l: any) => ({
-          text:   l.text   || '',
-          shot:   l.shot   || 'Medium Shot',
-          visual: l.visual || '',
+          text: l.text || '', shot: l.shot || 'Medium Shot', visual: l.visual || '',
         }))
-        // fallback content string for backward compat
-        const contentText = lines.map(l => l.text).join('。') || `${p.label} 對白`
+        const stype = SHOT_LABELS[p.shotType as keyof typeof SHOT_LABELS]
         return {
-          id:          `${id}-${p.type}-${i}`,
-          type:        p.type,
-          label:       p.label,
-          content:     contentText,
-          shotType:    lines[0]?.shot   || 'Medium Shot',
-          shotNote:    lines[0]?.visual || '',
-          durationSec: p.durationSec,
-          status:      'pending',
-          // store full lines in shotNote as JSON for camera page to use
-          lines:       lines,
+          id: `${id}-${p.type}-${i}`, type: p.type, label: p.label,
+          content: lines.map(l => l.text).join('。') || `${p.label} 對白`,
+          shotType: lines[0]?.shot || stype?.name || 'Medium Shot',
+          shotNote: lines[0]?.visual || stype?.note || '',
+          durationSec: p.durationSec, status: 'pending',
+          lines,
         } as ScriptPart & { lines: ScriptLine[] }
       })
 
@@ -158,21 +185,13 @@ ${partList}
       saveProject({ name, address, script: newScript, status: 'draft' })
       setStep('review')
     } catch (e) {
-      console.error(e)
-      setStep('input')
+      console.error(e); setStep('input')
     }
   }
 
-  const confirmScript = () => {
-    saveProject({ script, status: 'filming' })
-    router.push(`/project/${id}/camera`)
-  }
-
-  const updatePart = (i: number, content: string) => {
-    setScript(prev => prev.map((p, j) => j === i ? { ...p, content } : p))
-  }
-
-  const canGenerate = name.trim() && category
+  const confirmScript = () => { saveProject({ script, status: 'filming' }); router.push(`/project/${id}/camera`) }
+  const updatePart    = (i: number, content: string) => setScript(prev => prev.map((p, j) => j === i ? { ...p, content } : p))
+  const canGenerate   = name.trim() && category
 
   // ── Input ──
   if (step === 'input') return (
@@ -187,16 +206,40 @@ ${partList}
           <h1 className="garamond" style={{ fontSize: 32, fontWeight: 400, marginBottom: 8 }}>新 Project</h1>
           <p style={{ fontSize: 13, color: 'var(--ink3)', lineHeight: 1.6 }}>輸入資料，AI 幫你生成劇本</p>
         </div>
+
         <div>
           <label style={{ fontSize: 11, color: 'var(--ink3)', letterSpacing: '0.1em', display: 'block', marginBottom: 8 }}>名稱</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="例：巴特莊陶瓷村" />
+          <input value={name} onChange={e => setName(e.target.value)} onBlur={fetchPlaceDetails} placeholder="例：巴特莊陶瓷村" />
         </div>
+
         <div>
           <label style={{ fontSize: 11, color: 'var(--ink3)', letterSpacing: '0.1em', display: 'block', marginBottom: 8 }}>
-            地址 <span style={{ color: 'var(--ink3)', fontWeight: 400, letterSpacing: 0 }}>（幫 AI 搵資料）</span>
+            地址 <span style={{ fontWeight: 400, letterSpacing: 0, color: 'var(--ink3)' }}>（幫 AI 搵真實資料）</span>
           </label>
-          <input value={address} onChange={e => setAddress(e.target.value)} placeholder="例：Bát Tràng, Hà Nội, Vietnam" />
+          <input value={address} onChange={e => setAddress(e.target.value)} onBlur={fetchPlaceDetails} placeholder="例：Bát Tràng, Hà Nội, Vietnam" />
+          {/* Place details preview */}
+          {fetchingPlace && <div style={{ fontSize: 12, color: 'var(--ink3)', marginTop: 8 }}>搵緊地方資料…</div>}
+          {placeDetails && !fetchingPlace && (
+            <div style={{ marginTop: 8, background: 'var(--bg3)', borderRadius: 'var(--rs)', padding: '10px 12px', borderLeft: '2px solid var(--green)' }}>
+              <div style={{ fontSize: 12, color: 'var(--green)', marginBottom: 4 }}>✓ 搵到真實資料</div>
+              <div style={{ fontSize: 12, color: 'var(--ink2)' }}>
+                ★ {placeDetails.rating} ({placeDetails.totalRatings} 個評論)
+                {placeDetails.priceLevel ? ` · ${'$'.repeat(placeDetails.priceLevel)}` : ''}
+              </div>
+              {placeDetails.reviews[0] && (
+                <div style={{ fontSize: 11, color: 'var(--ink3)', marginTop: 4, lineHeight: 1.5 }}>
+                  「{placeDetails.reviews[0].text.slice(0, 60)}…」
+                </div>
+              )}
+            </div>
+          )}
+          {!placeDetails && !fetchingPlace && name.trim() && address.trim() && (
+            <div style={{ marginTop: 8, background: 'var(--bg3)', borderRadius: 'var(--rs)', padding: '8px 12px', borderLeft: '2px solid var(--border2)' }}>
+              <div style={{ fontSize: 12, color: 'var(--ink3)' }}>搵唔到真實資料，AI 會用探索性語氣寫稿</div>
+            </div>
+          )}
         </div>
+
         <div>
           <label style={{ fontSize: 11, color: 'var(--ink3)', letterSpacing: '0.1em', display: 'block', marginBottom: 10 }}>類別</label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -212,6 +255,7 @@ ${partList}
             ))}
           </div>
         </div>
+
         <button onClick={generate} disabled={!canGenerate} style={{
           width: '100%', border: 'none', borderRadius: 'var(--pill)', padding: '16px',
           fontSize: 15, fontWeight: 500, cursor: canGenerate ? 'pointer' : 'not-allowed',
@@ -226,7 +270,9 @@ ${partList}
   if (step === 'generating') return (
     <main style={{ minHeight: '100dvh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
       <div style={{ width: 32, height: 32, border: '2px solid var(--border2)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-      <p style={{ color: 'var(--ink3)', fontSize: 14 }}>AI 生成緊劇本…</p>
+      <p style={{ color: 'var(--ink3)', fontSize: 14 }}>
+        {placeDetails ? '根據真實資料生成緊劇本…' : 'AI 生成緊劇本…'}
+      </p>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </main>
   )
@@ -240,6 +286,12 @@ ${partList}
         <span style={{ fontSize: 11, color: 'var(--ink3)', padding: '3px 10px', border: '1px solid var(--border)', borderRadius: 'var(--pill)' }}>{project?.duration}秒</span>
       </div>
       <div style={{ flex: 1, padding: '20px 20px 120px', maxWidth: 480, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {placeDetails && (
+          <div style={{ background: 'var(--bg2)', border: '1px solid rgba(29,185,84,0.3)', borderRadius: 'var(--rs)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 12, color: 'var(--green)' }}>✓</span>
+            <span style={{ fontSize: 12, color: 'var(--ink3)' }}>根據 Google {placeDetails.rating}★ ({placeDetails.totalRatings} 評論) 生成</span>
+          </div>
+        )}
         <p style={{ fontSize: 13, color: 'var(--ink3)', marginBottom: 4 }}>點擊任何一個 part 可以編輯</p>
         {script.map((part, i) => {
           const lines: ScriptLine[] = (part as any).lines || []
@@ -248,8 +300,7 @@ ${partList}
               {editIdx === i ? (
                 <div style={{ background: 'var(--bg2)', border: '1px solid var(--accent)', borderRadius: 'var(--r)', padding: '14px 16px' }}>
                   <div style={{ fontSize: 11, color: 'var(--accent2)', marginBottom: 8 }}>{part.label}</div>
-                  <textarea value={part.content} onChange={e => updatePart(i, e.target.value)}
-                    style={{ minHeight: 120, lineHeight: 1.8, fontSize: 14, resize: 'vertical' }} autoFocus />
+                  <textarea value={part.content} onChange={e => updatePart(i, e.target.value)} style={{ minHeight: 120, lineHeight: 1.8, fontSize: 14, resize: 'vertical' }} autoFocus />
                   <button onClick={() => setEditIdx(null)} style={{ marginTop: 10, background: 'var(--accent)', border: 'none', borderRadius: 'var(--pill)', padding: '10px 20px', fontSize: 13, fontWeight: 500, color: '#fff', cursor: 'pointer' }}>完成編輯</button>
                 </div>
               ) : (
@@ -258,7 +309,6 @@ ${partList}
                     <span style={{ fontSize: 11, color: 'var(--accent2)', fontWeight: 500 }}>{part.label}</span>
                     <span style={{ fontSize: 11, color: 'var(--ink3)' }}>{part.durationSec}秒</span>
                   </div>
-                  {/* Show lines with shot + visual if available */}
                   {lines.length > 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {lines.map((line, li) => (
