@@ -1,6 +1,6 @@
 'use client'
-import { useState, useEffect, use } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, use, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import type { Project, ScriptPart, Duration } from '@/lib/types'
 import { DURATION_STRUCTURE } from '@/lib/script-structure'
 
@@ -19,14 +19,15 @@ export type ScriptLine = {
   visual: string   // what to find/frame in the scene
 }
 
-export default function CreateVideo({ params }: { params: Promise<{ id: string }> }) {
-  const { id }  = use(params)
-  const router  = useRouter()
+function CreateVideoInner({ params }: { params: Promise<{ id: string }> }) {
+  const { id }        = use(params)
+  const router        = useRouter()
+  const searchParams  = useSearchParams()
 
   const [project, setProject]   = useState<Project | null>(null)
   const [name, setName]         = useState('')
   const [address, setAddress]   = useState('')
-  const [category, setCategory] = useState('')
+  const [category, setCategory] = useState(searchParams.get('category') || '')
   const [step, setStep]         = useState<'input' | 'generating' | 'review'>('input')
   const [script, setScript]     = useState<ScriptPart[]>([])
   const [editIdx, setEditIdx]   = useState<number | null>(null)
@@ -286,4 +287,8 @@ ${partList}
       </div>
     </main>
   )
+}
+
+export default function CreateVideo({ params }: { params: Promise<{ id: string }> }) {
+  return <Suspense><CreateVideoInner params={params} /></Suspense>
 }
