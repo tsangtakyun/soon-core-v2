@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
 
     const fetchCat = async (type: string) => {
       const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json` +
-        `?location=${lat},${lng}&radius=1000&type=${type}&rankby=prominence&key=${key}&language=zh-TW`
+        `?location=${lat},${lng}&radius=5000&type=${type}&key=${key}&language=zh-TW`
       const res  = await fetch(url)
       const data = await res.json()
       if (data.status === 'REQUEST_DENIED') throw new Error('API key 無效或未啟用 Places API')
