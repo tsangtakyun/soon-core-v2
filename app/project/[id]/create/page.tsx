@@ -39,47 +39,54 @@ export default function CreateVideo({ params }: { params: Promise<{ id: string }
     if (!name.trim()) return
     setStep('generating')
     try {
-      const dur = project?.duration || 60
+      const dur    = project?.duration || 60
       const struct = DURATION_STRUCTURE[dur as Duration]
-      const parts  = struct.parts.map(p => `- ${p.label}（${p.durationSec}秒）`).join('\n')
+      const partList = struct.parts.map(p => `- ${p.label}（${p.durationSec}秒）`).join('\n')
+
+      // More VO lines for test parts based on duration
+      const testLines = dur === 30 ? 4 : dur === 60 ? 5 : 6
 
       const prompt = `你係 SOON Core AI，幫 creator 寫一份短片劇本。
 名稱：${name}
 地址：${address || '未提供'}
 片長：${dur}秒
 結構：
-${parts}
+${partList}
 
-重要：
+重要規則：
 1. 根據實際地址同地區生成，唔好假設係香港
-2. 每個 part 只需一句廣東話口語旁白／對白
-3. 輸出 JSON（唔好加其他文字）：
+2. 廣東話口語，短句，自然，唔oversell
+3. Hook：一句，帶懸念或衝擊感
+4. 背景介紹（如有）：3-4句介紹地方特色歷史
+5. 每個實測 part：${testLines}句對白，包括介紹、過程、感受、反應
+6. Ending：必須2句——第一句總結感受，第二句係 call to action（例：「你有冇興趣黎？留言話我知！」）
+7. 輸出 JSON（唔好加其他文字）：
 {
   "parts": [
-    { "label": "Hook", "content": "一句hook", "shotNote": "拍攝提示" },
-    { "label": "背景介紹", "content": "一句背景", "shotNote": "拍攝提示" },
-    ...
+    { "label": "Hook", "content": "一句" },
+    { "label": "實測 1", "content": "第一句。第二句。第三句。第四句。" },
+    { "label": "Ending", "content": "總結一句。Call to action。" }
   ]
 }`
 
-      const res  = await fetch('/api/generate', {
+      const res    = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1500, messages: [{ role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }),
       })
       const data   = await res.json()
       const parsed = JSON.parse((data.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim())
 
       const newScript: ScriptPart[] = struct.parts.map((p, i) => {
-        const ai     = parsed.parts?.[i] || {}
-        const stype  = SHOT_TYPES[p.shotType as keyof typeof SHOT_TYPES]
+        const ai    = parsed.parts?.[i] || {}
+        const stype = SHOT_TYPES[p.shotType as keyof typeof SHOT_TYPES]
         return {
           id:          `${id}-${p.type}-${i}`,
           type:        p.type,
           label:       p.label,
-          content:     ai.content || `${p.label} 旁白`,
-          shotType:    stype?.name  || 'Medium Shot',
-          shotNote:    ai.shotNote  || stype?.note || '',
+          content:     ai.content || `${p.label} 對白`,
+          shotType:    stype?.name || 'Medium Shot',
+          shotNote:    stype?.note || '',
           durationSec: p.durationSec,
           status:      'pending',
         }
@@ -103,7 +110,7 @@ ${parts}
     setScript(prev => prev.map((p, j) => j === i ? { ...p, content } : p))
   }
 
-  // ── Input step ──
+  // ── Input ──
   if (step === 'input') return (
     <main style={{ minHeight: '100dvh', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)' }}>
@@ -146,7 +153,7 @@ ${parts}
     </main>
   )
 
-  // ── Review / Edit script ──
+  // ── Review ──
   return (
     <main style={{ minHeight: '100dvh', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)' }}>
@@ -166,7 +173,7 @@ ${parts}
                 <textarea
                   value={part.content}
                   onChange={e => updatePart(i, e.target.value)}
-                  style={{ minHeight: 80, lineHeight: 1.7, fontSize: 14, resize: 'vertical' }}
+                  style={{ minHeight: 120, lineHeight: 1.8, fontSize: 14, resize: 'vertical' }}
                   autoFocus
                 />
                 <button onClick={() => setEditIdx(null)} style={{ marginTop: 10, background: 'var(--accent)', border: 'none', borderRadius: 'var(--pill)', padding: '10px 20px', fontSize: 13, fontWeight: 500, color: '#fff', cursor: 'pointer' }}>完成編輯</button>
@@ -174,14 +181,19 @@ ${parts}
             ) : (
               <button
                 onClick={() => setEditIdx(i)}
-                style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '14px 16px', textAlign: 'left', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '14px 16px', textAlign: 'left', cursor: 'pointer' }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                {/* Header: label left, duration right (no shotType shown) */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <span style={{ fontSize: 11, color: 'var(--accent2)', fontWeight: 500 }}>{part.label}</span>
-                  <span style={{ fontSize: 11, color: 'var(--ink3)' }}>{part.durationSec}秒 · {part.shotType}</span>
+                  <span style={{ fontSize: 11, color: 'var(--ink3)' }}>{part.durationSec}秒</span>
                 </div>
-                <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>{part.content}</div>
-                <div style={{ fontSize: 11, color: 'var(--ink3)', marginTop: 6 }}>{part.shotNote}</div>
+                {/* Content — show full multi-line */}
+                <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.9, whiteSpace: 'pre-line' }}>{part.content}</div>
+                {/* Shot note — one clean line below */}
+                <div style={{ fontSize: 11, color: 'var(--ink3)', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+                  {part.shotType} · {part.shotNote}
+                </div>
               </button>
             )}
           </div>
@@ -189,13 +201,15 @@ ${parts}
       </div>
 
       {/* Sticky confirm */}
-      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: '16px 20px 32px', background: 'linear-gradient(transparent, var(--bg) 40%)', maxWidth: 480, margin: '0 auto' }}>
-        <button
-          onClick={confirmScript}
-          style={{ width: '100%', background: 'var(--accent)', border: 'none', borderRadius: 'var(--pill)', padding: '16px', fontSize: 15, fontWeight: 500, color: '#fff', cursor: 'pointer' }}
-        >
-          確認劇本，開始拍攝 →
-        </button>
+      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: '16px 20px 32px', background: 'linear-gradient(transparent, var(--bg) 40%)' }}>
+        <div style={{ maxWidth: 480, margin: '0 auto' }}>
+          <button
+            onClick={confirmScript}
+            style={{ width: '100%', background: 'var(--accent)', border: 'none', borderRadius: 'var(--pill)', padding: '16px', fontSize: 15, fontWeight: 500, color: '#fff', cursor: 'pointer' }}
+          >
+            確認劇本，開始拍攝 →
+          </button>
+        </div>
       </div>
     </main>
   )
